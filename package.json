@@ -8,6 +8,7 @@
     "dev:mp": "concurrently \"next dev -p 3000\" \"npx tsx server/ws-server.ts\"",
     "build": "next build",
     "start": "next start",
+    "start:prod": "concurrently \"next start -p $PORT\" \"npx tsx server/ws-server.ts\"",
     "lint": "eslint .",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
