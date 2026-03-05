@@ -3,7 +3,7 @@ services:
     name: bot-arena
     env: node
     plan: free
-    buildCommand: npm install --include=dev && npm run build
+    buildCommand: rm -rf node_modules package-lock.json && npm install && npm run build
     startCommand: npm run start:prod
     envVars:
       - key: NODE_ENV
