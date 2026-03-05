@@ -183,6 +183,7 @@ export class GameEngine {
                 level: p.level, xp: r0(p.xp), skillPoints: p.skillPoints, alive: p.alive, killStreak: p.killStreak,
                 color: p.color,
                 statLevels: { ...p.statLevels },
+                orbitalAngle: r1(p.orbitalAngle),
                 pendingMutations: p.pendingMutations,
                 mutations: p.mutations.map(m => ({ id: m.def.id, icon: m.def.icon, stacks: m.stacks })),
             })),
@@ -256,6 +257,7 @@ export class GameEngine {
             p.angle = sp.angle; p.health = sp.health; p.maxHealth = sp.maxHealth
             p.size = sp.size; p.alive = sp.alive; p.level = sp.level
             if (sp.xp !== undefined) p.xp = sp.xp
+            if (sp.orbitalAngle !== undefined) p.orbitalAngle = sp.orbitalAngle
             if (sp.skillPoints !== undefined) p.skillPoints = sp.skillPoints
             if (sp.statLevels) p.statLevels = sp.statLevels
             if (sp.pendingMutations !== undefined) p.pendingMutations = sp.pendingMutations
@@ -755,6 +757,18 @@ export class GameEngine {
                         this.firePlayerBullet(bx, by, finalAngle + Math.PI, bSpeed * 0.8, finalDmg * 0.6, p.classDef.color, bulletSize, maxHits, false)
                     }
 
+                    // Shadow clones shooting
+                    if (eff.shadowClones && eff.shadowClones > 0) {
+                        for (let c = 1; c <= eff.shadowClones; c++) {
+                            const cAngle = p.angle + (c / (eff.shadowClones + 1)) * Math.PI * 2 + (this.data.gameTime);
+                            const cx = p.x + Math.cos(cAngle) * 50;
+                            const cy = p.y + Math.sin(cAngle) * 50;
+                            const cbx = cx + Math.cos(gunAngle) * spawnDist;
+                            const cby = cy + Math.sin(gunAngle) * spawnDist;
+                            this.firePlayerBullet(cbx, cby, finalAngle, bSpeed, finalDmg * 0.5, p.classDef.color, bulletSize, maxHits, isCrit, p.id, eff);
+                        }
+                    }
+
                     p.x -= Math.cos(gunAngle) * barrel.recoil * 2
                     p.y -= Math.sin(gunAngle) * barrel.recoil * 2
                 }
@@ -802,6 +816,19 @@ export class GameEngine {
                         const maxHits = 1 + p.statLevels.bulletPenetration
                         const bulletSize = barrel.width / 2
                         this.firePlayerBullet(bx, by, finalAngle, bSpeed, bDmg, p.classDef.color, bulletSize, maxHits, false, p.id, p.computedEffects)
+
+                        const eff = p.computedEffects;
+                        // Shadow clones shooting
+                        if (eff && eff.shadowClones && eff.shadowClones > 0) {
+                            for (let c = 1; c <= eff.shadowClones; c++) {
+                                const cAngle = p.angle + (c / (eff.shadowClones + 1)) * Math.PI * 2 + (this.data.gameTime);
+                                const cx = p.x + Math.cos(cAngle) * 50;
+                                const cy = p.y + Math.sin(cAngle) * 50;
+                                const cbx = cx + Math.cos(gunAngle) * spawnDist;
+                                const cby = cy + Math.sin(gunAngle) * spawnDist;
+                                this.firePlayerBullet(cbx, cby, finalAngle, bSpeed, bDmg * 0.5, p.classDef.color, bulletSize, maxHits, false, p.id, eff);
+                            }
+                        }
                     }
                 })
             }
@@ -1065,6 +1092,11 @@ export class GameEngine {
 
         // Armor
         let dmg = Math.max(0, rawDamage - eff.flatArmor)
+
+        // Shield Orbs Block
+        if (eff.shieldOrbs > 0) {
+            dmg *= Math.pow(0.85, eff.shieldOrbs) // 15% damage reduction per shield orb
+        }
 
         // Thorns
         if (eff.thornsPercent > 0) {
@@ -1364,102 +1396,105 @@ export class GameEngine {
     }
 
     updateSpecialMutations(dt: number) {
-        const p = this.localPlayer
-        const eff = p.computedEffects
+        this.alivePlayers.forEach(p => {
+            const eff = p.computedEffects
 
-        // Orbital bullets
-        if (eff.orbitalBullets > 0) {
-            p.orbitalAngle += dt * 3 * eff.orbitalSpeed
-            // Damage enemies near orbitals
-            for (let i = 0; i < eff.orbitalBullets; i++) {
-                const orbAngle = p.orbitalAngle + (i / eff.orbitalBullets) * Math.PI * 2
-                const orbX = p.x + Math.cos(orbAngle) * (p.size + 50)
-                const orbY = p.y + Math.sin(orbAngle) * (p.size + 50)
-                this.data.enemies.forEach(e => {
-                    if (dist(orbX, orbY, e.x, e.y) < 20 + e.def.size) {
-                        e.health -= eff.orbitalDamage * dt
-                        if (e.health <= 0) this.onEnemyKilled(e)
-                    }
-                })
-            }
-        }
-
-        // Fire trail
-        if (eff.fireTrail) {
-            p.fireTrailTimer += dt
-            if (p.fireTrailTimer >= 0.1 && (Math.abs(p.vx) > 0.5 || Math.abs(p.vy) > 0.5)) {
-                p.fireTrailTimer = 0
-                this.data.particles.push({
-                    x: p.x, y: p.y, vx: rnd(-0.5, 0.5), vy: rnd(-0.5, 0.5),
-                    life: 1.5, maxLife: 1.5, size: 12,
-                    color: '#ff6600', type: 'fire', alpha: 1
-                })
-                // Damage enemies in fire
-                this.data.enemies.forEach(e => {
-                    if (dist(p.x, p.y, e.x, e.y) < 30) {
-                        e.health -= 10 * dt
-                    }
-                })
-            }
-        }
-
-        // Aura of decay
-        if (eff.auraOfDecay) {
-            p.auraTimer += dt
-            this.data.enemies.forEach(e => {
-                if (dist(p.x, p.y, e.x, e.y) < eff.auraRadius) {
-                    e.health -= eff.auraDamage * dt
-                    if (e.health <= 0) this.onEnemyKilled(e)
-                }
-            })
-            if (p.auraTimer >= 0.3) {
-                p.auraTimer = 0
-                this.data.particles.push({
-                    x: p.x + rnd(-eff.auraRadius, eff.auraRadius),
-                    y: p.y + rnd(-eff.auraRadius, eff.auraRadius),
-                    vx: 0, vy: -1, life: 0.5, maxLife: 0.5, size: 5,
-                    color: '#88ff00', type: 'aura', alpha: 0.5
-                })
-            }
-        }
-
-        // Magnetic field
-        if (eff.magneticField) {
-            this.data.enemies.forEach(e => {
-                const d = dist(p.x, p.y, e.x, e.y)
-                if (d < 200 && d > p.size + e.def.size) {
-                    const ang = angle(e.x, e.y, p.x, p.y)
-                    e.vx += Math.cos(ang) * 2
-                    e.vy += Math.sin(ang) * 2
-                }
-                if (d < 80) {
-                    e.health -= eff.magneticDamage * dt
-                    if (e.health <= 0) this.onEnemyKilled(e)
-                }
-            })
-        }
-
-        // Meteor shower
-        if (eff.meteorShower) {
-            p.meteorTimer += dt
-            if (p.meteorTimer >= 2) {
-                p.meteorTimer = 0
-                // Drop a meteor on a random enemy
-                const target = this.data.enemies[Math.floor(Math.random() * this.data.enemies.length)]
-                if (target) {
-                    this.spawnExplosion(target.x, target.y, '#ff4400', 2)
-                    target.health -= 50
-                    this.spawnDamageNumber(target.x, target.y, 50)
-                    this.data.enemies.forEach(other => {
-                        if (other !== target && dist(target.x, target.y, other.x, other.y) < 100) {
-                            other.health -= 25
+            // Orbital bullets
+            if (eff.orbitalBullets > 0) {
+                p.orbitalAngle += dt * 3 * eff.orbitalSpeed
+                // Damage enemies near orbitals
+                for (let i = 0; i < eff.orbitalBullets; i++) {
+                    const orbAngle = p.orbitalAngle + (i / eff.orbitalBullets) * Math.PI * 2
+                    const orbX = p.x + Math.cos(orbAngle) * (p.size + 50)
+                    const orbY = p.y + Math.sin(orbAngle) * (p.size + 50)
+                    this.data.enemies.forEach(e => {
+                        if (dist(orbX, orbY, e.x, e.y) < 20 + e.def.size) {
+                            e.health -= eff.orbitalDamage * dt
+                            if (e.health <= 0) this.onEnemyKilled(e, p)
                         }
                     })
-                    if (target.health <= 0) this.onEnemyKilled(target)
-                    this.data.screenShake = 5
                 }
             }
-        }
+
+            // Fire trail
+            if (eff.fireTrail) {
+                p.fireTrailTimer += dt
+                if (p.fireTrailTimer >= 0.1 && (Math.abs(p.vx) > 0.5 || Math.abs(p.vy) > 0.5)) {
+                    p.fireTrailTimer = 0
+                    this.data.particles.push({
+                        x: p.x, y: p.y, vx: rnd(-0.5, 0.5), vy: rnd(-0.5, 0.5),
+                        life: 1.5, maxLife: 1.5, size: 12,
+                        color: '#ff6600', type: 'fire', alpha: 1
+                    })
+                    // Damage enemies in fire
+                    this.data.enemies.forEach(e => {
+                        if (dist(p.x, p.y, e.x, e.y) < 30) {
+                            e.health -= 10 * dt
+                            if (e.health <= 0) this.onEnemyKilled(e, p)
+                        }
+                    })
+                }
+            }
+
+            // Aura of decay
+            if (eff.auraOfDecay) {
+                p.auraTimer += dt
+                this.data.enemies.forEach(e => {
+                    if (dist(p.x, p.y, e.x, e.y) < eff.auraRadius) {
+                        e.health -= eff.auraDamage * dt
+                        if (e.health <= 0) this.onEnemyKilled(e, p)
+                    }
+                })
+                if (p.auraTimer >= 0.3) {
+                    p.auraTimer = 0
+                    this.data.particles.push({
+                        x: p.x + rnd(-eff.auraRadius, eff.auraRadius),
+                        y: p.y + rnd(-eff.auraRadius, eff.auraRadius),
+                        vx: 0, vy: -1, life: 0.5, maxLife: 0.5, size: 5,
+                        color: '#88ff00', type: 'aura', alpha: 0.5
+                    })
+                }
+            }
+
+            // Magnetic field
+            if (eff.magneticField) {
+                this.data.enemies.forEach(e => {
+                    const d = dist(p.x, p.y, e.x, e.y)
+                    if (d < 200 && d > p.size + e.def.size) {
+                        const ang = angle(e.x, e.y, p.x, p.y)
+                        e.vx += Math.cos(ang) * 2
+                        e.vy += Math.sin(ang) * 2
+                    }
+                    if (d < 80) {
+                        e.health -= eff.magneticDamage * dt
+                        if (e.health <= 0) this.onEnemyKilled(e, p)
+                    }
+                })
+            }
+
+            // Meteor shower
+            if (eff.meteorShower) {
+                p.meteorTimer += dt
+                if (p.meteorTimer >= 2) {
+                    p.meteorTimer = 0
+                    // Drop a meteor on a random enemy
+                    const target = this.data.enemies[Math.floor(Math.random() * this.data.enemies.length)]
+                    if (target) {
+                        this.spawnExplosion(target.x, target.y, '#ff4400', 2)
+                        target.health -= 50
+                        this.spawnDamageNumber(target.x, target.y, 50)
+                        this.data.enemies.forEach(other => {
+                            if (other !== target && dist(target.x, target.y, other.x, other.y) < 100) {
+                                other.health -= 25
+                                if (other.health <= 0) this.onEnemyKilled(other, p)
+                            }
+                        })
+                        if (target.health <= 0) this.onEnemyKilled(target, p)
+                        if (p.id === this.data.localPlayerId) this.data.screenShake = 5
+                    }
+                }
+            }
+        })
     }
 
     updateParticles(dt: number) {

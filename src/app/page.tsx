@@ -10,12 +10,15 @@ import { MultiplayerClient } from '@/lib/network'
 import type { RoomInfo, GameMode } from '@/lib/multiplayer-types'
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    w = Math.max(0, w); h = Math.max(0, h);
     if (w < 2 * r) r = w / 2; if (h < 2 * r) r = h / 2
+    r = Math.max(0, r);
     ctx.beginPath(); ctx.moveTo(x + r, y)
     ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r)
     ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath()
 }
 function drawShape(ctx: CanvasRenderingContext2D, shape: string, s: number) {
+    s = Math.max(0, s);
     if (shape === 'circle') { ctx.arc(0, 0, s, 0, Math.PI * 2) }
     else if (shape === 'square') { ctx.rect(-s, -s, s * 2, s * 2) }
     else if (shape === 'triangle') { ctx.moveTo(s, 0); ctx.lineTo(-s, -s); ctx.lineTo(-s, s); ctx.closePath() }
@@ -137,7 +140,7 @@ export default function Home() {
                 ctx.save(); ctx.translate(pu.x, pu.y + Math.sin(pu.bobPhase) * 4)
                 const puColor = pu.type === 'health' ? '#00ff88' : '#ffaa00'
                 ctx.shadowColor = puColor; ctx.shadowBlur = 15; ctx.fillStyle = puColor
-                ctx.beginPath(); ctx.arc(0, 0, pu.size, 0, Math.PI * 2); ctx.fill()
+                ctx.beginPath(); ctx.arc(0, 0, Math.max(0, pu.size), 0, Math.PI * 2); ctx.fill()
                 ctx.fillStyle = '#fff'; ctx.font = `bold ${pu.size}px Arial`; ctx.textAlign = 'center'
                 ctx.fillText(pu.type === 'health' ? '+' : '⚡', 0, pu.size * 0.35)
                 ctx.shadowBlur = 0; ctx.restore()
@@ -146,8 +149,9 @@ export default function Home() {
             d.bullets.forEach(b => {
                 if (b.trail.length > 1) { for (let t = 1; t < b.trail.length; t++) { const r = t / b.trail.length; ctx.globalAlpha = r * 0.4; ctx.strokeStyle = b.color; ctx.lineWidth = b.size * r; ctx.beginPath(); ctx.moveTo(b.trail[t - 1].x, b.trail[t - 1].y); ctx.lineTo(b.trail[t].x, b.trail[t].y); ctx.stroke() } ctx.globalAlpha = 1 }
                 ctx.shadowColor = b.color; ctx.shadowBlur = b.size * 2; ctx.fillStyle = b.color
-                ctx.beginPath(); ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2); ctx.fill()
-                ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(b.x, b.y, b.size * 0.4, 0, Math.PI * 2); ctx.fill()
+                const bs = Math.max(0, b.size);
+                ctx.beginPath(); ctx.arc(b.x, b.y, bs, 0, Math.PI * 2); ctx.fill()
+                ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(b.x, b.y, Math.max(0, bs * 0.4), 0, Math.PI * 2); ctx.fill()
                 ctx.shadowBlur = 0
             })
             // Enemies
@@ -165,7 +169,7 @@ export default function Home() {
                 ctx.shadowBlur = 0
                 ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, s * 0.25, 0, Math.PI * 2); ctx.fill()
                 // HP bar
-                ctx.save(); ctx.rotate(-e.angle); const hpPct = e.health / e.maxHealth
+                ctx.save(); ctx.rotate(-e.angle); const hpPct = Math.max(0, e.health / e.maxHealth)
                 if (hpPct < 1) { const bW = s * 1.6, bH = 5, bY = -s - 14; ctx.fillStyle = '#11111188'; roundRect(ctx, -bW / 2, bY, bW, bH, 3); ctx.fill(); ctx.fillStyle = hpPct > 0.5 ? '#00ff88' : hpPct > 0.25 ? '#ffcc00' : '#ff4444'; roundRect(ctx, -bW / 2, bY, bW * hpPct, bH, 2); ctx.fill() }
                 ctx.restore(); ctx.restore()
             })
@@ -173,25 +177,42 @@ export default function Home() {
             d.players.forEach(pl => {
                 if (!pl.alive) return
                 const isLocal = pl.id === d.localPlayerId
-                ctx.save(); ctx.translate(pl.x, pl.y)
-                // Barrels
-                ctx.save(); ctx.rotate(pl.angle)
-                pl.classDef.barrels.forEach(barrel => {
-                    ctx.save(); ctx.rotate(barrel.angleOffset)
-                    ctx.fillStyle = '#444'; ctx.strokeStyle = '#222'; ctx.lineWidth = 3
-                    ctx.fillRect(barrel.xOffset, barrel.yOffset - barrel.width / 2, barrel.length, barrel.width)
-                    ctx.strokeRect(barrel.xOffset, barrel.yOffset - barrel.width / 2, barrel.length, barrel.width)
+                const eff = pl.computedEffects
+
+                const drawPlayerModel = (x: number, y: number, angle: number, alpha: number, isShadow: boolean) => {
+                    ctx.save(); ctx.translate(x, y); ctx.globalAlpha = alpha
+                    ctx.save(); ctx.rotate(angle)
+                    pl.classDef.barrels.forEach(barrel => {
+                        ctx.save(); ctx.rotate(barrel.angleOffset)
+                        ctx.fillStyle = isShadow ? '#222' : '#444'; ctx.strokeStyle = isShadow ? '#111' : '#222'; ctx.lineWidth = 3
+                        ctx.fillRect(barrel.xOffset, barrel.yOffset - barrel.width / 2, barrel.length, barrel.width)
+                        ctx.strokeRect(barrel.xOffset, barrel.yOffset - barrel.width / 2, barrel.length, barrel.width)
+                        ctx.restore()
+                    })
                     ctx.restore()
-                })
-                ctx.restore()
-                // Body
-                ctx.save(); ctx.rotate(pl.angle)
-                const pColor = isLocal ? pl.classDef.color : pl.color
-                ctx.shadowColor = pColor; ctx.shadowBlur = 20; ctx.fillStyle = pColor; ctx.strokeStyle = '#222'; ctx.lineWidth = 3
-                ctx.beginPath(); ctx.arc(0, 0, pl.size, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
-                ctx.shadowBlur = 0; ctx.fillStyle = '#111'
-                ctx.beginPath(); ctx.arc(0, 0, pl.size * 0.35, 0, Math.PI * 2); ctx.fill()
-                ctx.restore()
+                    ctx.save(); ctx.rotate(angle)
+                    const pColor = isShadow ? '#444' : (isLocal ? pl.classDef.color : pl.color)
+                    const pls = Math.max(0, pl.size)
+                    ctx.shadowColor = pColor; ctx.shadowBlur = isShadow ? 10 : 20; ctx.fillStyle = pColor; ctx.strokeStyle = isShadow ? '#111' : '#222'; ctx.lineWidth = 3
+                    ctx.beginPath(); ctx.arc(0, 0, pls, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+                    ctx.shadowBlur = 0; ctx.fillStyle = '#111'
+                    ctx.beginPath(); ctx.arc(0, 0, Math.max(0, pls * 0.35), 0, Math.PI * 2); ctx.fill()
+                    ctx.restore()
+                    ctx.restore()
+                }
+
+                if (eff && eff.shadowClones > 0) {
+                    for (let c = 1; c <= eff.shadowClones; c++) {
+                        const cAngle = pl.angle + (c / (eff.shadowClones + 1)) * Math.PI * 2 + d.gameTime
+                        const cx = pl.x + Math.cos(cAngle) * 50
+                        const cy = pl.y + Math.sin(cAngle) * 50
+                        drawPlayerModel(cx, cy, pl.angle, 0.5, true)
+                    }
+                }
+
+                drawPlayerModel(pl.x, pl.y, pl.angle, 1, false)
+
+                ctx.save(); ctx.translate(pl.x, pl.y)
                 // Name tag for remote players
                 if (!isLocal) {
                     ctx.fillStyle = '#ffffffcc'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center'
@@ -204,6 +225,35 @@ export default function Home() {
                     ctx.fillStyle = phpPct > 0.5 ? '#00ff88' : phpPct > 0.25 ? '#ffcc00' : '#ff4444'
                     roundRect(ctx, -bw / 2, -pl.size - 12, bw * phpPct, 5, 2); ctx.fill()
                 }
+
+                // Orbital Bullets
+                if (eff && eff.orbitalBullets > 0) {
+                    const orbSize = 8
+                    for (let i = 0; i < eff.orbitalBullets; i++) {
+                        const orbAngle = (pl.orbitalAngle || 0) + (i / eff.orbitalBullets) * Math.PI * 2
+                        const ox = Math.cos(orbAngle) * (pl.size + 50)
+                        const oy = Math.sin(orbAngle) * (pl.size + 50)
+                        ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 15; ctx.fillStyle = '#00ffff'
+                        ctx.beginPath(); ctx.arc(ox, oy, orbSize, 0, Math.PI * 2); ctx.fill()
+                        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ox, oy, orbSize * 0.4, 0, Math.PI * 2); ctx.fill()
+                        ctx.shadowBlur = 0
+                    }
+                }
+
+                // Shield Orbs
+                if (eff && eff.shieldOrbs > 0) {
+                    const orbSize = 10
+                    for (let i = 0; i < eff.shieldOrbs; i++) {
+                        const orbAngle = -(pl.orbitalAngle || 0) * 0.5 + (i / eff.shieldOrbs) * Math.PI * 2
+                        const ox = Math.cos(orbAngle) * (pl.size + 40)
+                        const oy = Math.sin(orbAngle) * (pl.size + 40)
+                        ctx.shadowColor = '#0088ff'; ctx.shadowBlur = 15; ctx.fillStyle = '#0088ff'
+                        ctx.beginPath(); ctx.arc(ox, oy, orbSize, 0, Math.PI * 2); ctx.fill()
+                        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ox, oy, orbSize * 0.5, 0, Math.PI * 2); ctx.fill()
+                        ctx.shadowBlur = 0
+                    }
+                }
+
                 ctx.restore()
             })
             // Damage Numbers
@@ -235,7 +285,7 @@ export default function Home() {
             if (localP.killStreak >= 3) { ctx.textAlign = 'center'; ctx.font = `bold ${20 + Math.min(localP.killStreak, 10)}px Arial`; ctx.fillStyle = `hsl(${localP.killStreak * 15}, 100%, 60%)`; ctx.fillText(`${localP.killStreak} KILL STREAK!`, CANVAS_WIDTH / 2, 80) }
             // Boss HP
             const activeBoss = d.enemies.find(e => e.def.boss)
-            if (activeBoss) { const bhp = activeBoss.health / activeBoss.maxHealth, bbw = CANVAS_WIDTH - 100; ctx.fillStyle = '#11111199'; roundRect(ctx, 50, 5, bbw, 14, 5); ctx.fill(); ctx.fillStyle = '#ff00ff'; roundRect(ctx, 50, 5, bbw * bhp, 14, 5); ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(`BOSS — ${Math.floor(activeBoss.health)}`, CANVAS_WIDTH / 2, 16) }
+            if (activeBoss) { const bhp = Math.max(0, activeBoss.health / activeBoss.maxHealth), bbw = CANVAS_WIDTH - 100; ctx.fillStyle = '#11111199'; roundRect(ctx, 50, 5, bbw, 14, 5); ctx.fill(); ctx.fillStyle = '#ff00ff'; roundRect(ctx, 50, 5, bbw * bhp, 14, 5); ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = 'bold 10px Arial'; ctx.textAlign = 'center'; ctx.fillText(`BOSS — ${Math.max(0, Math.floor(activeBoss.health))}`, CANVAS_WIDTH / 2, 16) }
             // Boss Warning
             if (d.bossWarningTimer > 0 && !d.bossActive) { ctx.textAlign = 'center'; ctx.font = 'bold 28px Arial'; ctx.fillStyle = `rgba(255,0,100,${0.5 + Math.sin(d.gameTime * 10) * 0.5})`; ctx.fillText('⚠ BOSS INCOMING ⚠', CANVAS_WIDTH / 2, 130) }
             // Wave info
