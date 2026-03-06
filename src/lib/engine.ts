@@ -74,6 +74,8 @@ export class GameEngine {
             isMultiplayer: false, isHost: true, roomId: null, gameMode: 'solo_endless',
             mutationDraft: [], activeMutators: [], scoreMultiplier: 1,
             mutatorEnemyHpMult: 1, mutatorEnemyDmgMult: 1, mutatorEnemySpdMult: 1, mutatorEnemyCountMult: 1,
+            rerollsRemaining: 2, totalBulletsFired: 0, fovScale: 1,
+            storyChapter: 0, storyDialogue: [], storyDialogueTimer: 0, storyBossDefeated: false,
             bgPhase: 0,
             debrisItems: Array.from({ length: 20 }, () => ({
                 x: rnd(0, WORLD_WIDTH), y: rnd(0, WORLD_HEIGHT),
@@ -314,7 +316,7 @@ export class GameEngine {
         }
     }
 
-    startGame(mode: 'solo_endless' | 'solo_waves' | 'ffa' | 'coop' = 'solo_endless') {
+    startGame(mode: 'solo_endless' | 'solo_waves' | 'ffa' | 'coop' | 'story' = 'solo_endless') {
         initAudio()
         sfx.click()
         const hs = this.data.highScore
@@ -337,6 +339,65 @@ export class GameEngine {
             this.data.players[0].id = localId
         }
         this.data.state = 'mutator_select'
+    }
+
+    forfeit() {
+        if (this.data.state !== 'playing') return
+        // Save high score
+        if (this.data.score > this.data.highScore) {
+            this.data.highScore = this.data.score
+            if (typeof window !== 'undefined') localStorage.setItem('botArenaHighScore', Math.floor(this.data.score).toString())
+        }
+        this.data.state = 'gameover'
+    }
+
+    rerollMutationDraft() {
+        if (this.data.rerollsRemaining <= 0) return
+        this.data.rerollsRemaining--
+        const lp = this.localPlayer
+        this.data.mutationDraft = pickMutationDraft(lp.mutations, 3, lp.level)
+    }
+
+    // === STORY MODE ===
+    private storyChapters = [
+        { name: 'The Swarm', boss: 'boss_alpha', dialogue: ['Chapter 1: The Swarm', 'Endless drones pour from the void...', 'Survive the onslaught and destroy the Alpha.'] },
+        { name: 'The Siege', boss: 'boss_alpha', dialogue: ['Chapter 2: The Siege', 'Armored behemoths close in on all sides.', 'Break through the siege and shatter their leader.'] },
+        { name: 'The Hunters', boss: 'boss_omega', dialogue: ['Chapter 3: The Hunters', 'Precision snipers track your every move.', 'Hunt the hunters before they hunt you.'] },
+        { name: 'The Horde', boss: 'boss_omega', dialogue: ['Chapter 4: The Horde', 'The enemy evolves. Spawners and healers unite.', 'Cut the head off the hydra.'] },
+        { name: 'The Final Stand', boss: 'boss_omega', dialogue: ['Chapter 5: The Final Stand', 'Everything the void has... thrown at once.', 'This is the end. Make it count.'] },
+    ]
+
+    startStoryMode() {
+        this.startGame('story')
+        this.data.storyChapter = 0
+        this.data.storyDialogue = [...this.storyChapters[0].dialogue]
+        this.data.storyDialogueTimer = 0
+        this.data.storyBossDefeated = false
+        this.startGameAfterMutators()
+        this.data.state = 'story_dialogue'
+    }
+
+    advanceStoryChapter() {
+        this.data.storyChapter++
+        if (this.data.storyChapter >= this.storyChapters.length) {
+            // Victory!
+            if (this.data.score > this.data.highScore) {
+                this.data.highScore = this.data.score
+                if (typeof window !== 'undefined') localStorage.setItem('botArenaHighScore', Math.floor(this.data.score).toString())
+            }
+            this.data.state = 'story_victory'
+            return
+        }
+        this.data.storyDialogue = [...this.storyChapters[this.data.storyChapter].dialogue]
+        this.data.storyDialogueTimer = 0
+        this.data.storyBossDefeated = false
+        this.data.enemies = []
+        this.data.bullets = []
+        this.data.state = 'story_dialogue'
+    }
+
+    getStoryChapter() {
+        return this.storyChapters[this.data.storyChapter] || this.storyChapters[0]
     }
 
     startNextWave() {
@@ -420,6 +481,7 @@ export class GameEngine {
         } else if (!existing) {
             lp.mutations.push({ def, stacks: 1 })
         }
+        lp.pendingMutations = Math.max(0, lp.pendingMutations - 1)
         this.recomputeMutationEffects()
         this.data.state = 'playing'
     }
@@ -465,6 +527,16 @@ export class GameEngine {
                 }
             }
         })
+
+        // === HARD CAPS to prevent player immortality ===
+        eff.dodgeChance = Math.min(eff.dodgeChance, 0.60)
+        eff.lifestealPercent = Math.min(eff.lifestealPercent, 0.30)
+        eff.flatArmor = Math.min(eff.flatArmor, 50)
+        // damageMult and fireRateMult are uncapped — let the player go wild
+        eff.critMult = Math.min(eff.critMult, 8)
+        eff.shieldOrbs = Math.min(eff.shieldOrbs, 3)
+        // maxHealthMult is uncapped
+        eff.speedMult = Math.min(eff.speedMult, 3)
 
         p.computedEffects = eff
         this.recalculateStats()
@@ -532,7 +604,7 @@ export class GameEngine {
             }
             // Class evolution and mutation drafts only for local player immediately (solo_endless) or when picking up
             if (isLocal) {
-                if (this.data.gameMode === 'solo_endless') {
+                if (this.data.gameMode === 'solo_endless' || this.data.gameMode === 'story') {
                     // Check for class evolution
                     if ([15, 30, 45, 60].includes(p.level) && p.classDef.upgradesTo.length > 0) {
                         this.data.state = 'class_select'
@@ -542,6 +614,7 @@ export class GameEngine {
                     // Trigger mutation draft every level
                     this.data.mutationDraft = pickMutationDraft(p.mutations, 3, p.level)
                     if (this.data.mutationDraft.length > 0) {
+                        this.data.rerollsRemaining = 2
                         this.data.state = 'mutation_draft'
                     }
                 }
@@ -623,6 +696,20 @@ export class GameEngine {
             this.data.timeScale = 0.3
         } else {
             this.data.timeScale = 1
+        }
+
+        // FOV scaling over time
+        this.data.fovScale = 1 + Math.min(this.data.gameTime / 300, 0.5)
+
+        // Story mode: check if boss was defeated to advance chapter
+        if (this.data.gameMode === 'story' && !this.data.storyBossDefeated) {
+            const hasBoss = this.data.enemies.some(e => e.def.boss)
+            if (this.data.bossActive && !hasBoss) {
+                this.data.storyBossDefeated = true
+                this.data.bossActive = false
+                // Small delay then advance
+                setTimeout(() => this.advanceStoryChapter(), 1500)
+            }
         }
 
         // Kill streak timer
@@ -843,6 +930,7 @@ export class GameEngine {
 
     firePlayerBullet(x: number, y: number, ang: number, speed: number, damage: number, color: string, size: number, maxHits: number, isCrit: boolean, ownerId?: string, ownerEffects?: MutationEffects) {
         const eff = ownerEffects || this.localPlayer.computedEffects
+        this.data.totalBulletsFired++
         this.data.bullets.push({
             id: Math.random().toString(36).substr(2, 6),
             x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
@@ -876,33 +964,82 @@ export class GameEngine {
         })
     }
 
-    spawnEnemyAtAbs(typeId: string, x: number, y: number) {
+    spawnEnemyAtAbs(typeId: string, x: number, y: number): Enemy | undefined {
         const def = ENEMY_TYPES[typeId]
-        if (!def) return
+        if (!def) return undefined
 
-        const timeMult = 1 + (this.data.gameTime / 60) * 0.5
-        this.data.enemies.push({
+        const enemy: Enemy = {
             id: Math.random().toString(),
             x, y, vx: 0, vy: 0, angle: 0,
-            health: def.health * timeMult * this.data.mutatorEnemyHpMult,
-            maxHealth: def.health * timeMult * this.data.mutatorEnemyHpMult,
+            health: def.health,
+            maxHealth: def.health,
             def, fireTimer: 0, behaviorTimer: 0, phase: 0, targetX: 0, targetY: 0,
             spawnTime: Date.now(), color: def.color,
             poisonTimer: 0, poisonDamage: 0, freezeTimer: 0, spawnAnimTimer: 0.3, hitFlashTimer: 0,
-        })
+        }
+        this.data.enemies.push(enemy)
+        return enemy
     }
 
     spawnStreamEnemies(dt: number) {
+        if (this.data.gameMode === 'story') {
+            // Story mode spawning
+            const chapter = this.getStoryChapter()
+            const chapterTime = 30 + this.data.storyChapter * 15 // seconds per chapter
+
+            // Spawn boss after chapterTime seconds, if not already spawned
+            if (this.data.gameTime >= chapterTime && !this.data.bossActive && !this.data.storyBossDefeated) {
+                this.data.bossActive = true
+                this.data.bossWarningTimer = 0
+                const p = this.localPlayer
+                const ang = Math.random() * Math.PI * 2
+                const bx = clamp(p.x + Math.cos(ang) * 800, 100, this.worldW - 100)
+                const by = clamp(p.y + Math.sin(ang) * 800, 100, this.worldH - 100)
+                const bossHpScale = 1 + this.data.storyChapter * 3 // bosses get much tougher each chapter
+                const e = this.spawnEnemyAtAbs(chapter.boss, bx, by)
+                if (e) {
+                    e.health *= bossHpScale
+                    e.maxHealth *= bossHpScale
+                }
+                sfx.bossWarning()
+            }
+
+            // Stream normal enemies with chapter scaling
+            this.data.spawnTimer -= dt
+            if (this.data.spawnTimer <= 0) {
+                this.data.spawnTimer = Math.max(0.3, 0.8 - this.data.storyChapter * 0.1)
+                const keys = Object.keys(ENEMY_TYPES).filter(k => !ENEMY_TYPES[k].boss)
+                const maxIdx = Math.floor(Math.min(keys.length, 5 + this.data.storyChapter * 8))
+                const type = keys[Math.floor(Math.random() * maxIdx)]
+                const p = this.localPlayer
+                const ang = Math.random() * Math.PI * 2
+                const spawnDist = rnd(600, 1000)
+                const e = this.spawnEnemyAtAbs(type, clamp(p.x + Math.cos(ang) * spawnDist, 0, this.worldW), clamp(p.y + Math.sin(ang) * spawnDist, 0, this.worldH))
+                // Chapter scaling for regular enemies
+                if (e) {
+                    const chapterHpScale = 1 + this.data.storyChapter * 1.5
+                    e.health *= chapterHpScale
+                    e.maxHealth *= chapterHpScale
+                }
+            }
+            return
+        }
+
         if (this.data.gameMode !== 'solo_endless' && !this.data.waveActive) return;
+
+        // === TIME-BASED SCALING ===
+        const gt = this.data.gameTime
+        const hpScale = Math.pow(1.015, gt)   // exponential: 2min~6x, 5min~90x, 10min~8000x
+        const dmgScale = 1 + gt / 90
+        const spdScale = 1 + Math.min(gt / 300, 0.8)
 
         // Boss spawn logic
         const bossInterval = this.data.activeMutators.find(m => m.id === 'mut_double_boss') ? 20 : 60
-        if (this.data.gameTime >= this.data.nextBossTime && !this.data.bossActive) {
+        if (gt >= this.data.nextBossTime && !this.data.bossActive) {
             this.data.bossActive = true
             this.data.bossWarningTimer = 0
             this.data.nextBossTime += bossInterval
 
-            // Spawn boss near a random alive player
             const targets = this.alivePlayers
             const p = targets.length > 0 ? targets[Math.floor(Math.random() * targets.length)] : this.localPlayer
             const ang = Math.random() * Math.PI * 2
@@ -911,23 +1048,58 @@ export class GameEngine {
             const bossTypes = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].boss)
             const bossType = bossTypes[Math.floor(Math.random() * bossTypes.length)] || 'boss_alpha'
 
-            this.spawnEnemyAtAbs(bossType, clamp(p.x + Math.cos(ang) * distSq, 0, this.worldW), clamp(p.y + Math.sin(ang) * distSq, 0, this.worldH))
+            const e = this.spawnEnemyAtAbs(bossType, clamp(p.x + Math.cos(ang) * distSq, 0, this.worldW), clamp(p.y + Math.sin(ang) * distSq, 0, this.worldH))
+            // Boss HP scales even harder
+            if (e) {
+                const bossHpBonus = hpScale * (1 + gt / 30)
+                e.health *= bossHpBonus
+                e.maxHealth *= bossHpBonus
+                e.def = { ...e.def, damage: e.def.damage * dmgScale, speed: e.def.speed * spdScale }
+            }
         }
 
         this.data.spawnTimer -= dt * this.data.mutatorEnemyCountMult
         if (this.data.spawnTimer <= 0) {
-            this.data.spawnTimer = Math.max(0.2, 1.0 - (this.data.gameTime / 180) * 0.8)
+            // Spawn rate increases faster over time
+            this.data.spawnTimer = Math.max(0.1, 0.8 - (gt / 120) * 0.7)
 
             const keys = Object.keys(ENEMY_TYPES).filter(k => !ENEMY_TYPES[k].boss)
-            const maxIdx = Math.floor(Math.min(keys.length, 5 + (this.data.gameTime / 15) * 2))
+            // Unlock higher-tier enemies faster
+            const maxIdx = Math.floor(Math.min(keys.length, 5 + (gt / 10) * 2))
             const type = keys[Math.floor(Math.random() * maxIdx)]
 
-            // Spawn near a random alive player
+            // === VARIED SPAWN POSITIONS ===
             const targets = this.alivePlayers
             const p = targets.length > 0 ? targets[Math.floor(Math.random() * targets.length)] : this.localPlayer
-            const ang = Math.random() * Math.PI * 2
-            const distSq = rnd(600, 1000)
-            this.spawnEnemyAtAbs(type, clamp(p.x + Math.cos(ang) * distSq, 0, this.worldW), clamp(p.y + Math.sin(ang) * distSq, 0, this.worldH))
+            let sx: number, sy: number
+            const spawnRoll = Math.random()
+
+            if (spawnRoll < 0.60) {
+                // 60%: Near a random alive player (traditional)
+                const ang = Math.random() * Math.PI * 2
+                const spawnDist = rnd(600, 1000)
+                sx = clamp(p.x + Math.cos(ang) * spawnDist, 0, this.worldW)
+                sy = clamp(p.y + Math.sin(ang) * spawnDist, 0, this.worldH)
+            } else if (spawnRoll < 0.85) {
+                // 25%: World border
+                const side = Math.floor(Math.random() * 4)
+                if (side === 0) { sx = rnd(0, this.worldW); sy = 0 }
+                else if (side === 1) { sx = this.worldW; sy = rnd(0, this.worldH) }
+                else if (side === 2) { sx = rnd(0, this.worldW); sy = this.worldH }
+                else { sx = 0; sy = rnd(0, this.worldH) }
+            } else {
+                // 15%: Random world position
+                sx = rnd(100, this.worldW - 100)
+                sy = rnd(100, this.worldH - 100)
+            }
+
+            const e = this.spawnEnemyAtAbs(type, sx, sy)
+            // Apply time scaling to spawned enemies
+            if (e) {
+                e.health *= hpScale * this.data.mutatorEnemyHpMult
+                e.maxHealth *= hpScale * this.data.mutatorEnemyHpMult
+                e.def = { ...e.def, damage: e.def.damage * dmgScale * this.data.mutatorEnemyDmgMult, speed: e.def.speed * spdScale * this.data.mutatorEnemySpdMult }
+            }
         }
     }
 

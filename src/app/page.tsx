@@ -48,7 +48,9 @@ export default function Home() {
         totalDamageDealt: 0, totalHealingDone: 0, longestKillStreak: 0,
         dpsTracker: [] as { damage: number; time: number }[], className: 'Basic', gameMode: 'solo_endless' as string,
         wave: 1, waveTimer: 60, waveActive: true, pendingMutations: 0,
-        leaderboard: [] as any[], leaderboardSubmitted: false
+        leaderboard: [] as any[], leaderboardSubmitted: false,
+        rerollsRemaining: 2, totalBulletsFired: 0, fovScale: 1,
+        storyChapter: 0, storyDialogue: [] as string[], storyDialogueTimer: 0
     })
 
     const fetchLeaderboard = useCallback(() => {
@@ -92,6 +94,9 @@ export default function Home() {
         const handleKeyDown = (e: KeyboardEvent) => {
             engine.keys[e.key.toLowerCase()] = true
             if (e.key.toLowerCase() === 'e' && engine.data.state === 'playing') engine.data.autoFire = !engine.data.autoFire
+            if (e.key === 'Escape' && (engine.data.state === 'playing' || engine.data.state === 'paused')) {
+                engine.data.state = engine.data.state === 'paused' ? 'playing' : 'paused'
+            }
         }
         const handleKeyUp = (e: KeyboardEvent) => { engine.keys[e.key.toLowerCase()] = false }
         window.addEventListener('mousemove', handleMouseMove)
@@ -113,8 +118,13 @@ export default function Home() {
             ]
             nebs.forEach(n => { const g = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r); g.addColorStop(0, n.color); g.addColorStop(1, 'transparent'); ctx.fillStyle = g; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT) })
             ctx.save()
+            // FOV zoom — scale the camera view based on fovScale
+            const fov = d.fovScale || 1
             const shakeX = d.screenShake > 0 && d.screenShakeEnabled ? (Math.random() - 0.5) * d.screenShake : 0
             const shakeY = d.screenShake > 0 && d.screenShakeEnabled ? (Math.random() - 0.5) * d.screenShake : 0
+            ctx.translate(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2)
+            ctx.scale(1 / fov, 1 / fov)
+            ctx.translate(-CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 * -1)
             ctx.translate(CANVAS_WIDTH / 2 - d.camera.x + shakeX, CANVAS_HEIGHT / 2 - d.camera.y + shakeY)
             // Grid
             ctx.strokeStyle = 'rgba(100,120,200,0.15)'; ctx.lineWidth = 1; ctx.beginPath()
@@ -299,6 +309,21 @@ export default function Home() {
             if (d.isMultiplayer) { ctx.textAlign = 'left'; ctx.font = 'bold 11px Arial'; ctx.fillStyle = d.gameMode === 'ffa' ? '#ff4488' : '#44ff88'; ctx.fillText(d.gameMode === 'ffa' ? 'FFA PVP' : 'CO-OP', 22, CANVAS_HEIGHT - 50) }
             // Auto fire
             if (d.autoFire) { ctx.textAlign = 'left'; ctx.font = 'bold 12px Arial'; ctx.fillStyle = '#00ff88'; ctx.fillText('AUTO', 22, CANVAS_HEIGHT - 65) }
+            // Story chapter indicator
+            if (d.gameMode === 'story') {
+                ctx.textAlign = 'center'; ctx.font = 'bold 18px Arial'; ctx.fillStyle = '#ffaa44'
+                const ch = engine.getStoryChapter()
+                ctx.fillText(`CH${d.storyChapter + 1}: ${ch.name}`, CANVAS_WIDTH / 2, 35)
+            }
+            // Forfeit button
+            ctx.textAlign = 'left'; ctx.font = 'bold 11px Arial'
+            const forfeitX = 20, forfeitY = 50, forfeitW = 70, forfeitH = 22
+            const forfeitHover = engine.mouse.x > forfeitX && engine.mouse.x < forfeitX + forfeitW && engine.mouse.y > forfeitY && engine.mouse.y < forfeitY + forfeitH
+            ctx.fillStyle = forfeitHover ? '#ff444488' : '#33113388'
+            roundRect(ctx, forfeitX, forfeitY, forfeitW, forfeitH, 4); ctx.fill()
+            ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 1; roundRect(ctx, forfeitX, forfeitY, forfeitW, forfeitH, 4); ctx.stroke()
+            ctx.fillStyle = forfeitHover ? '#ff6666' : '#ff444488'; ctx.fillText('FORFEIT', forfeitX + 8, forfeitY + 15)
+            if (forfeitHover && engine.mouse.clicked) { engine.forfeit() }
             // Minimap
             const mmW = 120, mmH = 120, mmX = CANVAS_WIDTH - mmW - 15, mmY = 90
             ctx.fillStyle = '#0a0a2288'; roundRect(ctx, mmX, mmY, mmW, mmH, 6); ctx.fill()
@@ -344,17 +369,17 @@ export default function Home() {
             const draft = d.mutationDraft; if (draft.length === 0) return
             const boxW = 200, totalW = draft.length * boxW + (draft.length - 1) * 20; let startX = CANVAS_WIDTH / 2 - totalW / 2 + boxW / 2
             draft.forEach((mut, i) => {
-                const x = startX + i * (boxW + 20), y = 340
-                const hover = engine.mouse.x > x - boxW / 2 && engine.mouse.x < x + boxW / 2 && engine.mouse.y > y - 200 && engine.mouse.y < y + 200
+                const x = startX + i * (boxW + 20), y = 310
+                const hover = engine.mouse.x > x - boxW / 2 && engine.mouse.x < x + boxW / 2 && engine.mouse.y > y - 180 && engine.mouse.y < y + 180
                 const rc = rarityColor(mut.rarity), rbc = rarityBgColor(mut.rarity)
                 ctx.fillStyle = hover ? rbc + 'dd' : rbc + '88'; ctx.strokeStyle = rc; ctx.lineWidth = hover ? 3 : 2
                 if (hover) { ctx.shadowColor = rc; ctx.shadowBlur = 15 }
-                roundRect(ctx, x - boxW / 2, y - 200, boxW, 400, 12); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0
-                ctx.font = '36px Arial'; ctx.fillText(mut.icon, x, y - 120)
-                ctx.fillStyle = rc; ctx.font = 'bold 16px Arial'; ctx.fillText(mut.name, x, y - 70)
-                ctx.fillStyle = '#888'; ctx.font = '10px Arial'; ctx.fillText(mut.rarity.toUpperCase(), x, y - 50)
+                roundRect(ctx, x - boxW / 2, y - 180, boxW, 360, 12); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0
+                ctx.font = '36px Arial'; ctx.fillText(mut.icon, x, y - 110)
+                ctx.fillStyle = rc; ctx.font = 'bold 16px Arial'; ctx.fillText(mut.name, x, y - 60)
+                ctx.fillStyle = '#888'; ctx.font = '10px Arial'; ctx.fillText(mut.rarity.toUpperCase(), x, y - 40)
                 ctx.fillStyle = '#ccc'; ctx.font = '12px Arial'
-                const words = mut.desc.split(' '); let line = '', lineY = y - 25
+                const words = mut.desc.split(' '); let line = '', lineY = y - 15
                 words.forEach(w => { const test = line + w + ' '; if (ctx.measureText(test).width > boxW - 30) { ctx.fillText(line, x, lineY); lineY += 16; line = w + ' ' } else { line = test } })
                 ctx.fillText(line, x, lineY)
                 if (hover && engine.mouse.clicked) {
@@ -364,6 +389,20 @@ export default function Home() {
                     }
                 }
             })
+            // Reroll button
+            const rerollY = 530, rerollW = 180, rerollH = 40
+            const rerollX = CANVAS_WIDTH / 2 - rerollW / 2
+            const rerollsLeft = d.rerollsRemaining
+            const rerollHover = rerollsLeft > 0 && engine.mouse.x > rerollX && engine.mouse.x < rerollX + rerollW && engine.mouse.y > rerollY && engine.mouse.y < rerollY + rerollH
+            ctx.fillStyle = rerollsLeft > 0 ? (rerollHover ? '#2a1a3a' : '#1a1128') : '#0a0a1488'
+            ctx.strokeStyle = rerollsLeft > 0 ? '#aa66ff' : '#44446688'
+            ctx.lineWidth = rerollHover ? 3 : 2
+            roundRect(ctx, rerollX, rerollY, rerollW, rerollH, 8); ctx.fill(); ctx.stroke()
+            ctx.fillStyle = rerollsLeft > 0 ? (rerollHover ? '#cc88ff' : '#aa66ff') : '#44446688'
+            ctx.font = 'bold 16px Arial'; ctx.fillText(`🔄 REROLL (${rerollsLeft} left)`, CANVAS_WIDTH / 2, rerollY + 26)
+            if (rerollHover && engine.mouse.clicked && rerollsLeft > 0) {
+                engine.rerollMutationDraft()
+            }
         }
 
         const renderGameOver = () => {
@@ -385,7 +424,7 @@ export default function Home() {
             stats.forEach((s, i) => { const col = i % cols, row = Math.floor(i / cols), x = sx + col * colW, y = 180 + row * 80; ctx.fillStyle = '#111128cc'; roundRect(ctx, x - 75, y, 150, 60, 8); ctx.fill(); ctx.fillStyle = s.color; ctx.font = 'bold 22px Arial'; ctx.fillText(s.value, x, y + 28); ctx.fillStyle = '#666'; ctx.font = '10px Arial'; ctx.fillText(s.label, x, y + 48) })
             // All player scores in multiplayer
             if (d.isMultiplayer) { ctx.fillStyle = '#aaa'; ctx.font = '14px Arial'; d.players.forEach((pl, i) => { ctx.fillStyle = pl.color; ctx.fillText(`${pl.name}: LVL ${pl.level}${pl.alive ? '' : ' (DEAD)'}`, CANVAS_WIDTH / 2, 380 + i * 20) }) }
-            ctx.fillStyle = '#44aaff'; ctx.font = 'bold 20px Arial'; ctx.fillText('Click to return to Title', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 80)
+            ctx.fillStyle = '#44aaff'; ctx.font = 'bold 20px Arial'; ctx.fillText('Click to return to Title', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40)
             if (engine.mouse.clicked) { engine.data.state = 'title' }
         }
 
@@ -554,11 +593,90 @@ export default function Home() {
             else if (d.state === 'gameover') { renderGame(); renderGameOver() }
             else if (d.state === 'shop') { renderGame(); renderShop() }
             else if (d.state === 'lobby') { renderGame() }
+            else if (d.state === 'paused') {
+                renderGame()
+                // Pause overlay
+                ctx.fillStyle = 'rgba(6,6,18,0.80)'; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+                ctx.textAlign = 'center'
+                ctx.fillStyle = '#fff'; ctx.shadowColor = '#00ccff'; ctx.shadowBlur = 20; ctx.font = 'bold 48px Arial'; ctx.fillText('PAUSED', CANVAS_WIDTH / 2, 80); ctx.shadowBlur = 0
+                ctx.fillStyle = '#888'; ctx.font = '14px Arial'; ctx.fillText('Press ESC to resume', CANVAS_WIDTH / 2, 110)
+                // Run Stats
+                const lps = engine.localPlayer; const ef = lps.computedEffects
+                const statList = [
+                    { label: 'FIRE RATE MULT', value: `${ef.fireRateMult.toFixed(2)}x`, color: '#ffaa44' },
+                    { label: 'DAMAGE MULT', value: `${ef.damageMult.toFixed(2)}x`, color: '#ff6666' },
+                    { label: 'BULLET SPEED', value: `${ef.bulletSpeedMult.toFixed(2)}x`, color: '#4488ff' },
+                    { label: 'BULLETS FIRED', value: `${d.totalBulletsFired}`, color: '#00ccff' },
+                    { label: 'TOTAL KILLS', value: `${d.totalKills}`, color: '#ff4444' },
+                    { label: 'TOTAL DAMAGE', value: `${Math.floor(d.totalDamageDealt)}`, color: '#ffcc00' },
+                    { label: 'PEAK DPS', value: `${Math.floor(d.peakDps)}`, color: '#ff88ff' },
+                    { label: 'LONGEST STREAK', value: `${d.longestKillStreak}`, color: '#ff8800' },
+                    { label: 'DODGE CHANCE', value: `${Math.floor(ef.dodgeChance * 100)}%`, color: '#44ffaa' },
+                    { label: 'CRIT CHANCE', value: `${Math.floor(ef.critChance * 100)}%`, color: '#ffff44' },
+                    { label: 'CRIT MULT', value: `${ef.critMult.toFixed(1)}x`, color: '#ffcc44' },
+                    { label: 'MOVE SPEED', value: `${lps.speed.toFixed(1)}`, color: '#44ccff' },
+                    { label: 'MAX HEALTH', value: `${Math.floor(lps.maxHealth)}`, color: '#44ff88' },
+                    { label: 'HEALTH REGEN', value: `${(lps.statLevels.healthRegen * 2 + ef.flatRegen).toFixed(1)}/s`, color: '#88ff44' },
+                    { label: 'ARMOR', value: `${ef.flatArmor}`, color: '#8888ff' },
+                    { label: 'FOV SCALE', value: `${(d.fovScale || 1).toFixed(2)}x`, color: '#cccccc' },
+                ]
+                const cols = 4, colW = 160, startX = CANVAS_WIDTH / 2 - (colW * cols) / 2 + colW / 2
+                statList.forEach((s, i) => {
+                    const col = i % cols, row = Math.floor(i / cols)
+                    const x = startX + col * colW, y = 150 + row * 70
+                    ctx.fillStyle = '#111128cc'; roundRect(ctx, x - 70, y, 140, 55, 8); ctx.fill()
+                    ctx.fillStyle = s.color; ctx.font = 'bold 18px Arial'; ctx.fillText(s.value, x, y + 25)
+                    ctx.fillStyle = '#666'; ctx.font = '9px Arial'; ctx.fillText(s.label, x, y + 44)
+                })
+                // Active mutations list
+                if (lps.mutations.length > 0) {
+                    const mutY = 150 + Math.ceil(statList.length / cols) * 70 + 10
+                    ctx.fillStyle = '#aaa'; ctx.font = 'bold 14px Arial'; ctx.fillText('ACTIVE MUTATIONS', CANVAS_WIDTH / 2, mutY)
+                    const ms = 28, sp = 34, perRow = 12
+                    const mutStartX = CANVAS_WIDTH / 2 - (Math.min(lps.mutations.length, perRow) * sp) / 2 + sp / 2
+                    lps.mutations.forEach((m, i) => {
+                        const col = i % perRow, row = Math.floor(i / perRow)
+                        const mx = mutStartX + col * sp, my = mutY + 15 + row * sp
+                        ctx.fillStyle = rarityBgColor(m.def.rarity) + 'cc'; roundRect(ctx, mx - ms / 2, my, ms, ms, 4); ctx.fill()
+                        ctx.font = '16px Arial'; ctx.fillStyle = '#fff'; ctx.fillText(m.def.icon, mx, my + 20)
+                        if (m.stacks > 1) { ctx.font = 'bold 10px Arial'; ctx.fillStyle = '#ffcc00'; ctx.fillText(`x${m.stacks}`, mx + 12, my + 28) }
+                    })
+                }
+            }
+            else if (d.state === 'story_dialogue') {
+                renderGame()
+                ctx.fillStyle = 'rgba(6,6,18,0.85)'; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+                ctx.textAlign = 'center'
+                const lines = d.storyDialogue
+                if (lines.length > 0) {
+                    ctx.fillStyle = '#ffaa44'; ctx.shadowColor = '#ffaa00'; ctx.shadowBlur = 15; ctx.font = 'bold 36px Arial'
+                    ctx.fillText(lines[0], CANVAS_WIDTH / 2, 200); ctx.shadowBlur = 0
+                    ctx.fillStyle = '#cccccc'; ctx.font = '18px Arial'
+                    for (let i = 1; i < lines.length; i++) {
+                        ctx.fillText(lines[i], CANVAS_WIDTH / 2, 260 + (i - 1) * 35)
+                    }
+                }
+                ctx.fillStyle = '#44ffaa'; ctx.font = 'bold 22px Arial'; ctx.fillText('Click to continue', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 100)
+                if (engine.mouse.clicked) { engine.data.state = 'playing' }
+            }
+            else if (d.state === 'story_victory') {
+                renderGame()
+                ctx.fillStyle = 'rgba(6,6,18,0.90)'; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+                ctx.textAlign = 'center'
+                ctx.fillStyle = '#ffdd44'; ctx.shadowColor = '#ffaa00'; ctx.shadowBlur = 30; ctx.font = 'bold 60px Arial'
+                ctx.fillText('VICTORY', CANVAS_WIDTH / 2, 120); ctx.shadowBlur = 0
+                ctx.fillStyle = '#fff'; ctx.font = 'bold 28px Arial'; ctx.fillText('You completed the story!', CANVAS_WIDTH / 2, 180)
+                ctx.fillStyle = '#aaa'; ctx.font = '16px Arial'; ctx.fillText(`Final Score: ${Math.floor(d.score)}`, CANVAS_WIDTH / 2, 230)
+                const mins = Math.floor(d.gameTime / 60), secs = Math.floor(d.gameTime % 60)
+                ctx.fillText(`Time: ${mins}:${secs.toString().padStart(2, '0')}  |  ${d.totalKills} kills`, CANVAS_WIDTH / 2, 260)
+                ctx.fillStyle = '#44aaff'; ctx.font = 'bold 20px Arial'; ctx.fillText('Click to return to Title', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 80)
+                if (engine.mouse.clicked) { engine.data.state = 'title' }
+            }
             engine.mouse.clicked = false
             setUiState(prev => {
                 const lp = engine.localPlayer; const stateChanged = prev.state !== engine.data.state; const pointsChanged = prev.skillPoints !== lp.skillPoints
                 if (stateChanged || pointsChanged || prev.autoFire !== engine.data.autoFire || prev.bossActive !== engine.data.bossActive || prev.pendingMutations !== lp.pendingMutations) {
-                    return { ...prev, state: engine.data.state, skillPoints: lp.skillPoints, statLevels: { ...lp.statLevels }, mutationDraft: [...engine.data.mutationDraft], activeMutators: [...engine.data.activeMutators], mutations: lp.mutations.map(m => ({ name: m.def.name, icon: m.def.icon, stacks: m.stacks })), score: engine.data.score, highScore: engine.data.highScore, level: lp.level, killStreak: lp.killStreak, gameTime: engine.data.gameTime, totalKills: engine.data.totalKills, autoFire: engine.data.autoFire, bossWarningTimer: engine.data.bossWarningTimer, bossActive: engine.data.bossActive, peakDps: engine.data.peakDps, totalDamageDealt: engine.data.totalDamageDealt, totalHealingDone: engine.data.totalHealingDone, longestKillStreak: engine.data.longestKillStreak, dpsTracker: engine.data.dpsTracker, className: lp.classDef.name, gameMode: engine.data.gameMode, wave: engine.data.wave, waveTimer: engine.data.waveTimer, waveActive: engine.data.waveActive, pendingMutations: lp.pendingMutations }
+                    return { ...prev, state: engine.data.state, skillPoints: lp.skillPoints, statLevels: { ...lp.statLevels }, mutationDraft: [...engine.data.mutationDraft], activeMutators: [...engine.data.activeMutators], mutations: lp.mutations.map(m => ({ name: m.def.name, icon: m.def.icon, stacks: m.stacks })), score: engine.data.score, highScore: engine.data.highScore, level: lp.level, killStreak: lp.killStreak, gameTime: engine.data.gameTime, totalKills: engine.data.totalKills, autoFire: engine.data.autoFire, bossWarningTimer: engine.data.bossWarningTimer, bossActive: engine.data.bossActive, peakDps: engine.data.peakDps, totalDamageDealt: engine.data.totalDamageDealt, totalHealingDone: engine.data.totalHealingDone, longestKillStreak: engine.data.longestKillStreak, dpsTracker: engine.data.dpsTracker, className: lp.classDef.name, gameMode: engine.data.gameMode, wave: engine.data.wave, waveTimer: engine.data.waveTimer, waveActive: engine.data.waveActive, pendingMutations: lp.pendingMutations, rerollsRemaining: engine.data.rerollsRemaining, totalBulletsFired: engine.data.totalBulletsFired, fovScale: engine.data.fovScale, storyChapter: engine.data.storyChapter, storyDialogue: engine.data.storyDialogue, storyDialogueTimer: engine.data.storyDialogueTimer }
                 }
                 return prev
             })
@@ -632,6 +750,7 @@ export default function Home() {
                                 </div>
                                 <button onClick={() => engineRef.current?.startGame('solo_endless')} className="w-full px-8 py-3 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-400/50 text-cyan-400 font-bold rounded-xl hover:bg-gradient-to-r hover:from-cyan-400 hover:to-blue-500 hover:text-black hover:shadow-[0_0_30px_#00ffff88] transition-all duration-300">ENDLESS</button>
                                 <button onClick={() => engineRef.current?.startGame('solo_waves')} className="w-full px-8 py-3 bg-gradient-to-r from-teal-500/10 to-emerald-500/10 border border-teal-400/50 text-teal-400 font-bold rounded-xl hover:bg-gradient-to-r hover:from-teal-400 hover:to-emerald-500 hover:text-black hover:shadow-[0_0_30px_#44ffaa88] transition-all duration-300">WAVES</button>
+                                <button onClick={() => engineRef.current?.startStoryMode()} className="w-full px-8 py-3 bg-gradient-to-r from-orange-500/10 to-red-500/10 border border-orange-400/50 text-orange-400 font-bold rounded-xl hover:bg-gradient-to-r hover:from-orange-400 hover:to-red-500 hover:text-black hover:shadow-[0_0_30px_#ff880088] transition-all duration-300">STORY</button>
                             </div>
 
                             <div className="flex flex-col gap-4 items-center bg-slate-900/60 p-6 rounded-2xl border border-slate-800 backdrop-blur-md justify-center w-[340px]">

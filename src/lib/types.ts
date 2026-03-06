@@ -1,4 +1,4 @@
-export type GameState = 'title' | 'lobby' | 'playing' | 'shop' | 'paused' | 'gameover' | 'settings' | 'howto' | 'class_select' | 'mutator_select' | 'mutation_draft'
+export type GameState = 'title' | 'lobby' | 'playing' | 'shop' | 'paused' | 'gameover' | 'settings' | 'howto' | 'class_select' | 'mutator_select' | 'mutation_draft' | 'story_dialogue' | 'story_victory'
 export type Difficulty = 'easy' | 'normal' | 'hard'
 export type WeaponType = 'standard' | 'spread' | 'laser' | 'rockets' | 'plasma'
 export type AbilityType = 'emp' | 'shield' | 'slow' | 'none'
@@ -360,7 +360,7 @@ export interface GameData {
     isMultiplayer: boolean
     isHost: boolean
     roomId: string | null
-    gameMode: 'solo_endless' | 'solo_waves' | 'ffa' | 'coop'
+    gameMode: 'solo_endless' | 'solo_waves' | 'ffa' | 'coop' | 'story'
 
     wave: number
     waveTimer: number
@@ -374,6 +374,17 @@ export interface GameData {
     mutatorEnemyDmgMult: number
     mutatorEnemySpdMult: number
     mutatorEnemyCountMult: number
+
+    // Reroll & tracking
+    rerollsRemaining: number
+    totalBulletsFired: number
+    fovScale: number
+
+    // Story mode
+    storyChapter: number
+    storyDialogue: string[]
+    storyDialogueTimer: number
+    storyBossDefeated: boolean
 
     // Visual
     bgPhase: number
